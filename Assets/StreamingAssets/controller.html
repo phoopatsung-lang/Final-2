@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="th">
+	<head>
+		<meta charset="utf-8">
+			<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+				<title>Controller</title>
+				<style>
+					html,body{margin:0;height:100%;overflow:hidden;background:#111;color:#fff;font-family:sans-serif;
+					touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+					.screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px}
+					.hide{display:none}
+					input,button{font-size:22px;padding:14px 20px;border:0;border-radius:12px}
+					#pad{background:#ccc;color:#000}
+					#info{font-size:30px;font-weight:bold}
+					#hpbar{width:80%;max-width:360px;height:40px;background:#0005;border:3px solid #000;border-radius:10px;overflow:hidden;position:relative}
+					#hpfill{height:100%;width:0;background:#e53935;transition:width .2s}
+					#hptext{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:bold;color:#fff;text-shadow:0 0 3px #000}
+					#ring{width:160px;height:160px;border-radius:50%;border:3px solid #0006;position:relative}
+					#dot{width:30px;height:30px;border-radius:50%;background:#000;position:absolute;left:65px;top:65px}
+					.warrper{display:flex ; width: full; height: 1/2;  }
+					.picWarrper{width: 100%; height:full;}
+					.picWarrper:hover{background: red; width: 100%; height:full;}
+				</style>
+			</head>
+	<body>
+		<div class="warrper">
+			<div class="picWarrper">
+				<img src="1.png"></img>	
+			</div>
+			<div  class="picWarrper">
+				<img src="2.png"></img>
+			</div>
+			<div  class="picWarrper">
+				<img src="3.png"></img>
+			</div>
+			<div  class="picWarrper">
+				<img src="4.png"></img>
+			</div>
+		</div>
+		<div id="join" class="screen">
+			<h2>Phone Controller</h2>
+			<input id="name" maxlength="12" placeholder="ชื่อผู้เล่น">
+				<button id="go">เข้าร่วม</button>
+				<div id="msg"></div>
+			</div>
+		<div id="pad" class="screen hide">
+			<div id="info">กำลังเชื่อมต่อ...</div>
+			<div id="hpbar">
+				<div id="hpfill"></div>
+				<div id="hptext">HP - / -</div>
+			</div>
+			<div id="warn"></div>
+			<div id="ring">
+				<div id="dot"></div>
+			</div>
+			<button id="cal">ตั้งศูนย์</button>
+		</div>
+		<script>
+			const $ = id => document.getElementById(id);
+			const MAX_TILT = 30, DEAD = 0.08;
+			let ws, full = false, gotGyro = false, beta = 0, gamma = 0, b0 = null, g0 = null, x = 0, y = 0;
+			const keys = {};
+
+			let pid = localStorage.getItem('pid');
+			if (!pid) { pid = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('pid', pid); }
+			$('name').value = localStorage.getItem('pname') || '';
+
+			$('go').onclick = async () => {
+			try {
+			if (window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function') {
+			if (await DeviceOrientationEvent.requestPermission() !== 'granted') {
+			$('msg').textContent = 'ต้องกด "อนุญาต" การเข้าถึงการเคลื่อนไหว'; return;
+			}
+			}
+			} catch (e) { $('msg').textContent = 'ขอสิทธิ์ไม่สำเร็จ: ' + e; return; }
+			localStorage.setItem('pname', $('name').value);
+			addEventListener('deviceorientation', onOrient);
+			wakeLock();
+			$('join').classList.add('hide');
+			$('pad').classList.remove('hide');
+			connect();
+			setTimeout(() => { if (!gotGyro) $('warn').textContent = 'ไม่พบไจโร (ต้องเปิดผ่านลิงก์ https)'; }, 2000);
+			};
+
+			function connect() {
+			ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+			ws.onopen = () => send({ t: 'join', id: pid, name: $('name').value.trim() });
+			ws.onmessage = ev => {
+			const m = JSON.parse(ev.data);
+			if (m.t === 'welcome') { $('info').textContent = 'P' + (m.slot + 1) + ' ' + $('name').value; $('pad').style.background = m.color; }
+			if (m.t === 'hp') {
+			$('hpfill').style.width = (m.max > 0 ? 100 * m.hp / m.max : 0) + '%';
+			$('hptext').textContent = m.hp + ' / ' + m.max;
+			}
+			if (m.t === 'full') { full = true; $('info').textContent = 'ห้องเต็ม (4/4)'; ws.close(); }
+			if (m.t === 'vib' && navigator.vibrate) navigator.vibrate(m.ms);
+			};
+			ws.onclose = () => { if (!full) { $('info').textContent = 'หลุด... กำลังต่อใหม่'; setTimeout(connect, 1000); } };
+			}
+
+			function send(o) { if (ws && ws.readyState === 1 && ws.bufferedAmount < 1024) ws.send(JSON.stringify(o)); }
+
+function onOrient(e) {
+  if (e.beta == null) return;
+  gotGyro = true; $('warn').textContent = '';
+  beta = e.beta; gamma = e.gamma;
+  if (b0 === null) calibrate();
+}
+function calibrate() { b0 = beta; g0 = gamma; }
+$('cal').onclick = calibrate;
+
+function clamp(v) { v = Math.max(-1, Math.min(1, v)); return Math.abs(v) < DEAD ? 0 : v; }
+function wrap(d) { return ((d + 540) % 360) - 180; }
+
+function compute() {
+  if (!gotGyro) {
+    x = (keys.ArrowRight ? 1 : 0) - (keys.ArrowLeft ? 1 : 0);
+    y = (keys.ArrowUp ? 1 : 0) - (keys.ArrowDown ? 1 : 0);
+    return;
+  }
+  const db = wrap(beta - b0), dg = gamma - g0;
+  const ang = screen.orientation ? screen.orientation.angle : (window.orientation || 0);
+  const a = ((ang % 360) + 360) % 360;
+  let tx, ty;
+  if (a === 90)       { tx = db;  ty = dg;  }
+  else if (a === 270) { tx = -db; ty = -dg; }
+  else if (a === 180) { tx = -dg; ty = db;  }
+  else                { tx = dg;  ty = -db; }
+  x = clamp(tx / MAX_TILT); y = clamp(ty / MAX_TILT);
+}
+
+setInterval(() => {
+  compute();
+  send({ t: 'in', x: +x.toFixed(3), y: +y.toFixed(3) });
+  $('dot').style.transform = `translate(${x * 65}px,${-y * 65}px)`;
+}, 33);
+
+onkeydown = e => { keys[e.key] = true; };
+onkeyup = e => { keys[e.key] = false; };
+
+async function wakeLock() { try { if (navigator.wakeLock) await navigator.wakeLock.request('screen'); } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') wakeLock(); });
+		</script>
+	</body>
+</html>
